@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 type Service struct {
 	config     *config.Config
 	ytdlp      *downloader.YtdlpDownloader
+	douyin     *downloader.DouyinDownloader // 添加抖音下载器
 	downloads  map[string]*downloader.DownloadResponse
 	mu         sync.RWMutex
 	wsClients  map[*websocket.Conn]bool
@@ -43,6 +45,7 @@ func NewService(cfg *config.Config) *Service {
 	s := &Service{
 		config:     cfg,
 		ytdlp:      downloader.NewYtdlpDownloader(cfg),
+		douyin:     downloader.NewDouyinDownloader(), // 初始化抖音下载器
 		downloads:  make(map[string]*downloader.DownloadResponse),
 		wsClients:  make(map[*websocket.Conn]bool),
 		downloadCh: make(chan *downloadTask, 100), // 增加缓冲区大小到100
@@ -165,8 +168,17 @@ func (s *Service) GetVideoInfo(c *gin.Context) {
 		return
 	}
 
-	// 统一使用yt-dlp下载器
-	info, err := s.ytdlp.GetVideoInfo(url)
+	var info *downloader.VideoInfo
+	var err error
+
+	// 判断是否为抖音链接
+	if s.isDouyinURL(url) {
+		// 使用抖音下载器获取视频信息
+		info, err = s.douyin.GetVideoInfo(url)
+	} else {
+		// 使用yt-dlp下载器获取其他视频信息
+		info, err = s.ytdlp.GetVideoInfo(url)
+	}
 
 	if err != nil {
 		logrus.Errorf("获取视频信息失败: %v", err)
@@ -217,6 +229,23 @@ func (s *Service) GetVideoInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, info)
+}
+
+// isDouyinURL 判断是否为抖音链接
+func (s *Service) isDouyinURL(urlStr string) bool {
+	patterns := []string{
+		`^https?://v\.douyin\.com/`,
+		`^https?://www\.douyin\.com/video/`,
+		`^https?://www\.douyin\.com/share/video/`,
+	}
+
+	for _, pattern := range patterns {
+		matched, _ := regexp.MatchString(pattern, urlStr)
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleWebSocket WebSocket处理器
@@ -277,11 +306,57 @@ func (s *Service) downloadWorker() {
 
 // processDownload 处理下载任务
 func (s *Service) processDownload(id string, req *downloader.DownloadRequest) {
+	logrus.Infof("开始处理下载任务: %s, URL: %s", id, req.URL)
+
+	// 获取下载记录
+	s.mu.RLock()
+	download, exists := s.downloads[id]
+	s.mu.RUnlock()
+
+	if !exists {
+		logrus.Errorf("下载任务不存在: %s", id)
+		return
+	}
+
+	// 更新状态为下载中
 	s.mu.Lock()
-	download := s.downloads[id]
 	download.Status = downloader.StatusDownloading
+	download.Updated = time.Now()
 	s.mu.Unlock()
 
+	// 广播进度更新
+	s.broadcastProgress(id, download)
+
+	// 判断是否为抖音链接
+	if s.isDouyinURL(req.URL) {
+		// 使用抖音下载器
+		resp, err := s.douyin.Download(req)
+		if err == nil && resp != nil {
+			// 更新下载信息
+			s.mu.Lock()
+			download.Status = resp.Status
+			download.Progress = resp.Progress
+			download.Speed = resp.Speed
+			download.ETA = resp.ETA
+			download.File = resp.File
+			download.Error = resp.Error
+			download.Updated = time.Now()
+			s.mu.Unlock()
+
+			// 广播进度更新
+			s.broadcastProgress(id, download)
+			return
+		}
+		// 如果抖音下载器失败，记录错误
+		logrus.Errorf("抖音下载器失败: %v，将尝试使用yt-dlp下载器", err)
+	}
+
+	// 使用yt-dlp下载器作为后备
+	s.processYtdlpDownload(id, req, download)
+}
+
+// processYtdlpDownload 使用yt-dlp处理下载
+func (s *Service) processYtdlpDownload(id string, req *downloader.DownloadRequest, download *downloader.DownloadResponse) {
 	// 使用任务ID作为文件名前缀
 	if req.Output == "" {
 		req.Output = filepath.Join(s.config.Downloader.OutputDir, id+"_video.mp4")
@@ -305,7 +380,7 @@ func (s *Service) processDownload(id string, req *downloader.DownloadRequest) {
 		s.broadcastProgress(id, download)
 	}
 
-	// 下载视频
+	// 使用yt-dlp下载器
 	actualFile, err := s.ytdlp.Download(req, progressCallback)
 
 	s.mu.Lock()
@@ -336,54 +411,42 @@ func (s *Service) processDownload(id string, req *downloader.DownloadRequest) {
 				}
 			}
 
-			// 检查是否是B站视频且下载了分离的音视频文件
-			if strings.Contains(req.URL, "bilibili.com") {
-				// 检查是否有对应的音频文件
-				// 如果当前文件是视频文件，查找对应的音频文件
-				if strings.Contains(actualFile, ".f") && strings.HasSuffix(actualFile, ".mp4") {
-					videoFile := actualFile
-					audioFile := ""
+			// 检查是否有对应的音频文件
+			if strings.Contains(actualFile, ".f") && strings.HasSuffix(actualFile, ".mp4") {
+				videoFile := actualFile
+				audioFile := ""
 
-					// 尝试查找对应的音频文件
-					files, _ := os.ReadDir(s.config.Downloader.OutputDir)
-					for _, file := range files {
-						if !file.IsDir() && strings.HasPrefix(file.Name(), id) &&
-							(strings.HasSuffix(file.Name(), ".m4a") ||
-								strings.HasSuffix(file.Name(), ".aac") ||
-								strings.HasSuffix(file.Name(), ".mp3")) {
-							audioFile = filepath.Join(s.config.Downloader.OutputDir, file.Name())
-							break
-						}
+				// 尝试查找对应的音频文件
+				filePattern := strings.Replace(actualFile, ".f", ".f", 1)
+				filePattern = strings.TrimSuffix(filePattern, filepath.Ext(filePattern)) + ".*"
+				matches, _ := filepath.Glob(filePattern)
+
+				for _, match := range matches {
+					if match != actualFile && (strings.Contains(match, ".m4a") || strings.Contains(match, ".mp3") || strings.Contains(match, ".aac") || strings.Contains(match, ".opus")) {
+						audioFile = match
+						break
 					}
+				}
 
-					// 如果找到了音频文件，尝试合并
-					if audioFile != "" {
-						logrus.Infof("找到分离的视频文件 %s 和音频文件 %s，尝试合并", videoFile, audioFile)
+				// 如果找到了音频文件，尝试合并
+				if audioFile != "" {
+					logrus.Infof("找到对应的音频文件: %s", audioFile)
+					mergedPath := filepath.Join(filepath.Dir(videoFile), id+"_merged"+filepath.Ext(videoFile))
 
-						// 创建合并后的文件名
-						mergedFilename := id + "_merged.mp4"
-						mergedPath := filepath.Join(s.config.Downloader.OutputDir, mergedFilename)
-
-						// 使用FFmpeg合并文件
-						cmd := exec.Command("ffmpeg", "-i", videoFile, "-i", audioFile, "-c:v", "copy", "-c:a", "aac", "-strict", "experimental", "-y", mergedPath)
-
-						// 设置标准错误输出，以便记录错误信息
-						var stderr bytes.Buffer
-						cmd.Stderr = &stderr
-
-						err := cmd.Run()
-						if err == nil {
-							logrus.Infof("成功合并视频和音频到: %s", mergedPath)
-							actualFile = mergedPath
-						} else {
-							logrus.Errorf("合并视频和音频失败: %v, 错误输出: %s", err, stderr.String())
-							// 合并失败，仍然使用视频文件
-							logrus.Warnf("合并失败，使用视频文件: %s", videoFile)
-						}
+					// 使用ffmpeg合并视频和音频
+					cmd := exec.Command("ffmpeg", "-i", videoFile, "-i", audioFile, "-c", "copy", mergedPath)
+					var stderr bytes.Buffer
+					cmd.Stderr = &stderr
+					if err := cmd.Run(); err == nil {
+						logrus.Infof("成功合并视频和音频到: %s", mergedPath)
+						actualFile = mergedPath
+					} else {
+						logrus.Errorf("合并视频和音频失败: %v, 错误输出: %s", err, stderr.String())
 					}
 				}
 			}
 
+			// 更新下载状态
 			download.Status = downloader.StatusCompleted
 			download.Progress = 100
 			download.File = actualFile
@@ -393,7 +456,7 @@ func (s *Service) processDownload(id string, req *downloader.DownloadRequest) {
 	download.Updated = time.Now()
 	s.mu.Unlock()
 
-	// 发送最终状态更新
+	// 广播进度更新
 	s.broadcastProgress(id, download)
 }
 
