@@ -15,6 +15,8 @@
 
 ## 🚀 快速开始
 
+详细的快速开始指南请查看 [docs/QUICK_START.md](docs/QUICK_START.md)
+
 ### 前置要求
 
 - Go 1.19+
@@ -142,7 +144,7 @@ curl -X POST http://localhost:8080/api/downloads/clear
 
 ## 📝 更新日志
 
-详细更新历史请查看 [CHANGELOG.md](CHANGELOG.md)
+详细更新历史请查看 [docs/CHANGELOG.md](docs/CHANGELOG.md)
 
 ### v1.1.0 (2025-06-18)
 
@@ -204,6 +206,7 @@ Service
 2. 检查日志文件 `logs/video-hunter.log`
 3. 确保 yt-dlp 已正确安装并可用
 4. 提交新的 Issue 并附上详细的错误信息
+5. 查看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) 获取常见问题解决方案
 
 ---
 
@@ -212,7 +215,23 @@ Service
 ## SpankBang 支持说明
 - 自动加反爬虫请求头，无需 Cookie、无需 impersonate
 - 只需粘贴 SpankBang 视频链接即可下载
-- 详细说明见 [SPANKBANG_SUPPORT.md](./SPANKBANG_SUPPORT.md)
+- 详细说明见 [docs/SPANKBANG_SUPPORT.md](docs/SPANKBANG_SUPPORT.md)
+
+## 本地下载功能
+- 支持将视频直接下载到用户本地
+- 详细说明见 [docs/LOCAL_DOWNLOAD_FEATURE.md](docs/LOCAL_DOWNLOAD_FEATURE.md)
+
+## 文件名处理
+- 自动处理特殊字符和非法文件名
+- 详细说明见 [docs/FILENAME_HANDLING.md](docs/FILENAME_HANDLING.md)
+
+## 配置优化
+- 详细的配置选项和优化建议
+- 详细说明见 [docs/CONFIG_OPTIMIZATION.md](docs/CONFIG_OPTIMIZATION.md)
+
+## 项目结构优化
+- 优化的项目结构和代码组织
+- 详细说明见 [docs/PROJECT_STRUCTURE_OPTIMIZATION.md](docs/PROJECT_STRUCTURE_OPTIMIZATION.md)
 
 ## 常见问题
 1. **403 Forbidden**
