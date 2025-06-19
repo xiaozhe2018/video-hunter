@@ -367,17 +367,43 @@ func (s *Service) processYtdlpDownload(id string, req *downloader.DownloadReques
 		req.Output = filepath.Join(dir, id+"_"+base)
 	}
 
+	// 上次进度更新时间
+	var lastProgressTime time.Time
+	// 上次进度值
+	var lastProgress float64
+
 	// 创建进度回调
 	progressCallback := func(progress *downloader.DownloadResponse) {
-		s.mu.Lock()
-		download.Progress = progress.Progress
-		download.Speed = progress.Speed
-		download.ETA = progress.ETA
-		download.Updated = time.Now()
-		s.mu.Unlock()
+		// 获取当前时间
+		now := time.Now()
 
-		// 发送进度更新
-		s.broadcastProgress(id, download)
+		// 仅在以下情况下更新和广播进度：
+		// 1. 首次更新
+		// 2. 距离上次更新已经过去至少1秒
+		// 3. 进度变化超过1%
+		// 4. 进度达到100%（完成）
+		if lastProgressTime.IsZero() ||
+			now.Sub(lastProgressTime) >= time.Second ||
+			progress.Progress-lastProgress >= 1.0 ||
+			progress.Progress >= 100.0 {
+
+			s.mu.Lock()
+			download.Progress = progress.Progress
+			download.Speed = progress.Speed
+			download.ETA = progress.ETA
+			download.Updated = now
+			s.mu.Unlock()
+
+			// 发送进度更新
+			s.broadcastProgress(id, download)
+
+			// 更新上次进度时间和值
+			lastProgressTime = now
+			lastProgress = progress.Progress
+
+			// 仅在进度变化显著时记录日志
+			logrus.Infof("下载进度 [%s]: %.1f%% %s", id, progress.Progress, progress.Speed)
+		}
 	}
 
 	// 使用yt-dlp下载器
