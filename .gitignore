@@ -1,0 +1,47 @@
+# 编译生成的文件
+/video-hunter
+/build/
+/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 测试二进制文件
+*.test
+*.prof
+
+# 输出文件夹
+/downloads/
+/temp/
+/logs/
+/data/
+/Users/qx/project/go/video-hunter/downloads/
+/Users/qx/project/go/video-hunter/logs/
+
+# 日志文件
+*.log
+*.log.*
+
+# 配置文件（可能包含敏感信息）
+# 注意：如果需要提交示例配置，可以使用config.yaml.example
+
+# macOS系统文件
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE文件
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 依赖目录
+/vendor/
+
+# 其他
+.env
+*.bak
+*.tmp 

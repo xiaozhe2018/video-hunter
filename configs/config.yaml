@@ -1,0 +1,108 @@
+# 🎬 Video Hunter 配置文件
+# 智能视频下载器 - 基于 Go 和 yt-dlp 的现代化视频下载工具
+
+# 服务器配置
+server:
+  # 服务端口 (1-65535)
+  port: 8080
+  # 监听地址 (0.0.0.0 表示监听所有网络接口)
+  host: "0.0.0.0"
+  # 运行模式 (debug/release)
+  mode: "debug"
+
+# 日志配置
+log:
+  # 日志级别 (debug/info/warn/error)
+  level: "info"
+  # 日志文件路径
+  file: "logs/video-hunter.log"
+  # 单个日志文件最大大小 (MB)
+  max_size: 100
+  # 日志文件保留天数
+  max_age: 30
+  # 保留的日志文件备份数量
+  max_backups: 10
+
+# 下载器配置
+downloader:
+  # 下载文件保存目录
+  output_dir: "./downloads"
+  # 下载失败时的最大重试次数
+  max_retries: 3
+  # 下载超时时间 (秒)
+  timeout: 300
+  # 最大并发下载数
+  max_concurrent: 3
+
+# yt-dlp 配置
+ytdlp:
+  # yt-dlp 命令路径
+  # 支持以下格式:
+  # - "yt-dlp" (如果 yt-dlp 已安装到系统 PATH，推荐)
+  # - "python3 -m yt_dlp" (使用 pip 安装的 yt-dlp)
+  # - "/usr/bin/python3 -m yt_dlp" (指定 python3 路径)
+  # 
+  # 检测 yt-dlp 安装位置:
+  # 1. 检查系统 PATH: which yt-dlp
+  # 2. 检查 pip 安装: python3 -m pip list | grep yt-dlp
+  # 3. 测试命令: yt-dlp --version
+  path: "yt-dlp"
+  
+  # 用户代理字符串 (用于反爬虫)
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  
+  # Cookie 文件路径 (可选，用于需要登录的网站)
+  cookies_file: ""
+  
+  # 代理设置 (可选，格式: http://proxy:port 或 socks5://proxy:port)
+  proxy: ""
+  
+  # 默认下载格式 (best/worst/720p/1080p/4k 等)
+  format: "best"
+  
+  # 是否提取音频 (true/false)
+  extract_audio: false
+  
+  # 音频格式 (mp3/m4a/wav 等)
+  audio_format: "mp3"
+  
+  # 音频质量 (128K/192K/320K 等)
+  audio_quality: "192K"
+
+# aria2c 配置
+aria2:
+  # aria2c 命令路径
+  path: "aria2c"
+  # 最大连接数
+  max_connections: 16
+  # 最小分片大小 (M)
+  min_split_size: 1
+  # 是否继续下载未完成的文件
+  continue: true
+
+# 抖音下载配置
+douyin:
+  # 是否启用直接API下载 (不使用yt-dlp)
+  enable_direct_api: true
+  # 是否使用移动端User-Agent
+  use_mobile_ua: true
+  # 移动端User-Agent
+  mobile_ua: "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
+  # API请求超时时间 (秒)
+  api_timeout: 20
+
+# 数据库配置
+database:
+  # 数据库驱动 (sqlite/mysql/postgresql)
+  driver: "sqlite"
+  # 数据库连接字符串
+  dsn: "./data/video-hunter.db"
+
+# 安全配置
+security:
+  # CORS 允许的源 (["*"] 表示允许所有源)
+  cors_origins: ["*"]
+  # 速率限制 (每分钟最大请求数)
+  rate_limit: 100
+  # 速率限制时间窗口
+  rate_limit_window: "1m"

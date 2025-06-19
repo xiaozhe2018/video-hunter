@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎬 Video Hunter - 智能视频下载器</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        .card-hover:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+        .download-item {
+            animation: slideIn 0.5s ease-out;
+        }
+        .loading-spinner {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .url-input:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: all 0.3s ease;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- 导航栏 -->
+    <nav class="gradient-bg text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center py-4">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-video text-2xl"></i>
+                    <h1 class="text-2xl font-bold">Video Hunter</h1>
+                    <span class="bg-white bg-opacity-20 px-2 py-1 rounded-full text-sm">v1.0.0</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button id="settingsBtn" class="hover:text-gray-200 transition-colors">
+                        <i class="fas fa-cog mr-2"></i>设置
+                    </button>
+                    <button id="helpBtn" class="hover:text-gray-200 transition-colors">
+                        <i class="fas fa-question-circle mr-2"></i>帮助
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主要内容 -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- 状态栏 -->
+        <div id="statusBar" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 hidden">
+            <div class="flex items-center">
+                <i class="fas fa-info-circle text-blue-500 mr-3"></i>
+                <span id="statusText" class="text-blue-700"></span>
+            </div>
+        </div>
+
+        <!-- 下载表单 -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-8 card-hover">
+            <h2 class="text-2xl font-bold text-gray-800 mb-6">
+                <i class="fas fa-download mr-3 text-blue-500"></i>开始下载
+            </h2>
+            
+            <form id="downloadForm" class="space-y-6">
+                <!-- URL输入 -->
+                <div>
+                    <label for="url" class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="fas fa-link mr-2"></i>视频地址
+                    </label>
+                    <div class="flex space-x-2">
+                        <input type="url" id="url" name="url" required
+                               class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent url-input"
+                               placeholder="请输入视频URL，支持YouTube、Pinterest、Bilibili等网站">
+                        <button type="button" id="pasteBtn" 
+                                class="px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
+                            <i class="fas fa-paste"></i>
+                        </button>
+                        <button type="button" id="clearUrlBtn" 
+                                class="px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <p class="text-sm text-gray-500 mt-1">支持网站: YouTube, Pinterest, Bilibili, Twitter, Instagram</p>
+                </div>
+
+                <!-- 视频信息预览 -->
+                <div id="videoInfo" class="hidden bg-gray-50 rounded-lg p-4">
+                    <h3 class="font-medium text-gray-800 mb-2">
+                        <i class="fas fa-info-circle mr-2 text-blue-500"></i>视频信息
+                    </h3>
+                    <div id="videoInfoContent" class="text-sm text-gray-600">
+                        <!-- 视频信息将在这里显示 -->
+                    </div>
+                </div>
+
+                <!-- 下载选项 -->
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">下载选项</label>
+                    <div class="flex items-center">
+                        <input type="radio" id="saveLocal" name="downloadType" value="local" class="mr-2" checked>
+                        <label for="saveLocal" class="text-sm text-gray-600">保存到本地</label>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        下载完成后会自动保存到你的电脑
+                    </p>
+                </div>
+
+                <!-- 下载进度条 -->
+                <div id="progressBar" class="hidden">
+                    <div class="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 mb-2">
+                        <div id="progressFill" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-sm text-gray-500">
+                        <span id="progressText">0%</span>
+                        <span id="downloadSpeed">0 MB/s</span>
+                        <span id="remainingTime">剩余时间: 计算中...</span>
+                    </div>
+                </div>
+
+                <!-- 下载选项 -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label for="format" class="block text-sm font-medium text-gray-700 mb-2">
+                            <i class="fas fa-film mr-2"></i>视频格式
+                        </label>
+                        <select id="format" name="format" 
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            <option value="best">最佳质量</option>
+                            <option value="720p">720p</option>
+                            <option value="1080p">1080p</option>
+                            <option value="4k">4K</option>
+                            <option value="worst">最低质量</option>
+                        </select>
+                    </div>
+                    
+                    <div>
+                        <label for="output" class="block text-sm font-medium text-gray-700 mb-2">
+                            <i class="fas fa-file-video mr-2"></i>文件名 (可选)
+                        </label>
+                        <input type="text" id="output" name="output"
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                               placeholder="例如: 我的视频 (无需输入扩展名，系统会自动添加)">
+                        <p class="text-xs text-gray-500 mt-1">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            留空使用视频原标题，系统会自动处理扩展名
+                        </p>
+                    </div>
+                    
+                    <div>
+                        <label for="threads" class="block text-sm font-medium text-gray-700 mb-2">
+                            <i class="fas fa-network-wired mr-2"></i>下载线程
+                        </label>
+                        <input type="number" id="threads" name="threads" min="1" max="16" value="4"
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="flex space-x-4">
+                    <button type="button" id="downloadBtn"
+                            class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium btn-primary">
+                        <i class="fas fa-download mr-2"></i>开始下载
+                    </button>
+                    <button type="button" id="clearBtn"
+                            class="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
+                        <i class="fas fa-trash mr-2"></i>清空
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 下载列表 -->
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-gray-800">
+                    <i class="fas fa-list mr-3 text-green-500"></i>下载列表
+                    <span id="downloadCount" class="ml-2 bg-gray-100 text-gray-600 px-2 py-1 rounded-full text-sm">0</span>
+                </h3>
+                <div class="flex space-x-2">
+                    <button id="refreshBtn" class="text-blue-600 hover:text-blue-800 transition-colors">
+                        <i class="fas fa-sync-alt mr-2"></i>刷新
+                    </button>
+                    <button id="clearAllBtn" class="text-red-600 hover:text-red-800 transition-colors">
+                        <i class="fas fa-trash-alt mr-2"></i>清空所有
+                    </button>
+                </div>
+            </div>
+            
+            <div id="downloadList" class="space-y-4">
+                <!-- 下载项目将在这里动态添加 -->
+                <div class="text-center text-gray-500 py-8" id="emptyState">
+                    <i class="fas fa-inbox text-4xl mb-4"></i>
+                    <p>暂无下载任务</p>
+                    <p class="text-sm">开始下载视频后，任务将显示在这里</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载指示器 -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 text-center max-w-sm mx-4">
+            <div class="loading-spinner rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p class="text-gray-700" id="loadingText">正在处理...</p>
+        </div>
+    </div>
+
+    <!-- 通知 -->
+    <div id="notification" class="fixed top-4 right-4 z-50 hidden">
+        <div class="bg-white rounded-lg shadow-lg p-4 max-w-sm">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i id="notificationIcon" class="fas fa-info-circle text-blue-500"></i>
+                </div>
+                <div class="ml-3">
+                    <p id="notificationText" class="text-sm font-medium text-gray-900"></p>
+                </div>
+                <div class="ml-auto pl-3">
+                    <button onclick="hideNotification()" class="text-gray-400 hover:text-gray-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置模态框 -->
+    <div id="settingsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md mx-4 w-full">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-gray-800">
+                    <i class="fas fa-cog mr-2 text-blue-500"></i>设置
+                </h3>
+                <button onclick="closeSettings()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="fas fa-folder mr-2"></i>下载目录
+                    </label>
+                    <input type="text" id="downloadDir" value="./downloads" 
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="fas fa-redo mr-2"></i>最大重试次数
+                    </label>
+                    <input type="number" id="maxRetries" value="3" min="0" max="10" 
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="fas fa-clock mr-2"></i>超时时间（秒）
+                    </label>
+                    <input type="number" id="timeout" value="300" min="30" max="1800" 
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="fas fa-network-wired mr-2"></i>最大并发下载数
+                    </label>
+                    <input type="number" id="maxConcurrent" value="3" min="1" max="10" 
+                           class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+            </div>
+            <div class="flex justify-end space-x-2 mt-6">
+                <button onclick="closeSettings()" 
+                        class="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors">
+                    <i class="fas fa-times mr-2"></i>取消
+                </button>
+                <button onclick="saveSettings()" 
+                        class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+                    <i class="fas fa-save mr-2"></i>保存
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 帮助模态框 -->
+    <div id="helpModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-2xl mx-4 w-full max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-gray-800">
+                    <i class="fas fa-question-circle mr-2 text-blue-500"></i>使用帮助
+                </h3>
+                <button onclick="closeHelp()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="space-y-6 text-gray-700">
+                <div>
+                    <h4 class="font-semibold text-gray-800 mb-2">
+                        <i class="fas fa-globe mr-2 text-green-500"></i>支持的网站
+                    </h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                        <div class="flex items-center">
+                            <i class="fab fa-youtube text-red-500 mr-2"></i>YouTube
+                        </div>
+                        <div class="flex items-center">
+                            <i class="fab fa-pinterest text-red-500 mr-2"></i>Pinterest
+                        </div>
+                        <div class="flex items-center">
+                            <i class="fas fa-play-circle text-pink-500 mr-2"></i>Bilibili
+                        </div>
+                        <div class="flex items-center">
+                            <i class="fab fa-twitter text-blue-500 mr-2"></i>Twitter
+                        </div>
+                        <div class="flex items-center">
+                            <i class="fab fa-instagram text-purple-500 mr-2"></i>Instagram
+                        </div>
+                        <div class="flex items-center">
+                            <i class="fab fa-tiktok text-black mr-2"></i>TikTok
+                        </div>
+                        <div class="flex items-center">
+                            <i class="fas fa-video text-orange-500 mr-2"></i>SpankBang
+                        </div>
+                        <div class="flex items-center">
+                            <i class="fas fa-ellipsis-h text-gray-500 mr-2"></i>其他yt-dlp支持的网站
+                        </div>
+                    </div>
+                </div>
+                
+                <div>
+                    <h4 class="font-semibold text-gray-800 mb-2">
+                        <i class="fas fa-play mr-2 text-blue-500"></i>使用步骤
+                    </h4>
+                    <ol class="list-decimal list-inside space-y-1 text-sm">
+                        <li>复制视频URL到输入框</li>
+                        <li>选择下载格式和质量</li>
+                        <li>点击"开始下载"按钮</li>
+                        <li>在下载列表中查看进度</li>
+                    </ol>
+                </div>
+                
+                <div>
+                    <h4 class="font-semibold text-gray-800 mb-2">
+                        <i class="fas fa-exclamation-triangle mr-2 text-yellow-500"></i>注意事项
+                    </h4>
+                    <ul class="list-disc list-inside space-y-1 text-sm">
+                        <li>请确保遵守相关网站的使用条款</li>
+                        <li>下载的视频仅供个人使用</li>
+                        <li>某些视频可能因版权限制无法下载</li>
+                        <li>建议使用稳定的网络连接</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h4 class="font-semibold text-gray-800 mb-2">
+                        <i class="fas fa-cog mr-2 text-gray-500"></i>功能特性
+                    </h4>
+                    <ul class="list-disc list-inside space-y-1 text-sm">
+                        <li>支持多种视频格式和质量选择</li>
+                        <li>实时显示下载进度和速度</li>
+                        <li>支持批量下载管理</li>
+                        <li>美观的现代化界面</li>
+                        <li>基于yt-dlp的高性能下载引擎</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="flex justify-end mt-6">
+                <button onclick="closeHelp()" 
+                        class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+                    <i class="fas fa-check mr-2"></i>知道了
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html> 
