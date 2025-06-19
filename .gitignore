@@ -16,8 +16,6 @@
 /temp/
 /logs/
 /data/
-/Users/qx/project/go/video-hunter/downloads/
-/Users/qx/project/go/video-hunter/logs/
 
 # 日志文件
 *.log
