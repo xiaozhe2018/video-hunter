@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -403,6 +404,58 @@ func (s *Service) processYtdlpDownload(id string, req *downloader.DownloadReques
 
 			// 仅在进度变化显著时记录日志
 			logrus.Infof("下载进度 [%s]: %.1f%% %s", id, progress.Progress, progress.Speed)
+		}
+	}
+
+	// 特殊处理Pinterest视频
+	if strings.Contains(req.URL, "pinterest.com") && (req.Format == "best" || req.Format == "") {
+		// 先获取视频信息，找出可用的格式
+		info, err := s.ytdlp.GetVideoInfo(req.URL)
+		if err == nil && len(info.Formats) > 0 {
+			// 查找视频格式和音频格式
+			var videoFormat, audioFormat string
+			var maxHeight int
+
+			// 查找最高分辨率的视频格式
+			for _, format := range info.Formats {
+				if strings.Contains(format.Resolution, "x") {
+					parts := strings.Split(format.Resolution, "x")
+					if len(parts) == 2 {
+						if height, err := strconv.Atoi(parts[1]); err == nil {
+							if height > maxHeight {
+								maxHeight = height
+								videoFormat = format.FormatID
+							}
+						}
+					}
+				}
+			}
+
+			// 查找音频格式
+			for _, format := range info.Formats {
+				if strings.Contains(format.Resolution, "audio only") {
+					audioFormat = format.FormatID
+					break
+				}
+			}
+
+			// 如果找到了视频和音频格式，组合它们
+			if videoFormat != "" && audioFormat != "" {
+				req.Format = videoFormat + "+" + audioFormat
+				logrus.Infof("检测到Pinterest视频，自动选择最佳格式: %s", req.Format)
+			} else if videoFormat != "" {
+				// 只找到视频格式
+				req.Format = videoFormat
+				logrus.Infof("检测到Pinterest视频，自动选择视频格式: %s", req.Format)
+			} else {
+				// 使用默认的best格式
+				req.Format = "best"
+				logrus.Infof("检测到Pinterest视频，使用默认best格式")
+			}
+		} else {
+			// 如果获取视频信息失败，使用默认的best格式
+			req.Format = "best"
+			logrus.Infof("检测到Pinterest视频，使用默认best格式")
 		}
 	}
 

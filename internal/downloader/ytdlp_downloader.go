@@ -196,6 +196,21 @@ func (y *YtdlpDownloader) GetVideoInfo(url string) (*VideoInfo, error) {
 
 		// 添加额外参数
 		args = append(args, "--no-check-certificate")
+	} else if strings.Contains(url, "pinterest.com") {
+		// 为Pinterest添加特殊请求头
+		pinterestHeaders := map[string]string{
+			"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+			"Accept-Language":           "en-US,en;q=0.9",
+			"Accept-Encoding":           "gzip, deflate, br",
+			"DNT":                       "1",
+			"Connection":                "keep-alive",
+			"Upgrade-Insecure-Requests": "1",
+		}
+
+		// 添加Pinterest特殊请求头
+		for key, value := range pinterestHeaders {
+			args = append(args, "--add-header", fmt.Sprintf("%s: %s", key, value))
+		}
 	}
 
 	args = append(args, url)
@@ -277,10 +292,11 @@ func (y *YtdlpDownloader) GetVideoInfo(url string) (*VideoInfo, error) {
 	}
 
 	info := &VideoInfo{
-		Title:    getString(videoData, "title"),
-		Duration: getString(videoData, "duration_string"),
-		Formats:  []VideoFormat{},
-		Metadata: make(map[string]string),
+		Title:       getString(videoData, "title"),
+		Duration:    getString(videoData, "duration_string"),
+		Formats:     []VideoFormat{},
+		Metadata:    make(map[string]string),
+		CanDownload: true, // 确保设置为可下载
 	}
 
 	// 提取格式信息
@@ -418,6 +434,16 @@ func (y *YtdlpDownloader) Download(req *DownloadRequest, progressCallback func(*
 
 			// 确保合并视频和音频
 			args = append(args, "--merge-output-format", "mp4")
+
+			// 检查系统中是否安装了ffmpeg
+			_, err := exec.LookPath("ffmpeg")
+			if err == nil {
+				// 只有在ffmpeg存在的情况下才添加ffmpeg相关参数
+				args = append(args, "--ffmpeg-location", "ffmpeg")
+			} else {
+				logrus.Warnf("系统中未安装ffmpeg，视频和音频将不会被合并: %v", err)
+				logrus.Warnf("请安装ffmpeg以获得带音频的视频")
+			}
 
 			// 添加额外的参数以确保正确下载
 			args = append(args, "--no-check-certificate")
@@ -790,6 +816,14 @@ func (y *YtdlpDownloader) findActualFile(outputTemplate string) (string, error) 
 	if videoFile != "" && audioFile != "" {
 		logrus.Infof("找到分离的视频文件 %s 和音频文件 %s，尝试合并", videoFile, audioFile)
 
+		// 检查系统中是否安装了ffmpeg
+		_, err := exec.LookPath("ffmpeg")
+		if err != nil {
+			logrus.Warnf("系统中未安装ffmpeg，无法合并视频和音频: %v", err)
+			logrus.Warnf("请安装ffmpeg以获得带音频的视频，现在将返回无声视频")
+			return videoFile, nil
+		}
+
 		// 创建合并后的文件名
 		mergedFilename := taskID + "_merged.mp4"
 		mergedPath := filepath.Join(y.config.Downloader.OutputDir, mergedFilename)
@@ -801,7 +835,7 @@ func (y *YtdlpDownloader) findActualFile(outputTemplate string) (string, error) 
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 
-		err := cmd.Run()
+		err = cmd.Run()
 		if err == nil {
 			logrus.Infof("成功合并视频和音频到: %s", mergedPath)
 			return mergedPath, nil
@@ -956,637 +990,18 @@ func (y *YtdlpDownloader) DownloadBilibili(req *DownloadRequest, progressCallbac
 	// 确保合并视频和音频
 	args = append(args, "--merge-output-format", "mp4")
 
-	// 强制使用FFmpeg合并，但不传递额外的参数（避免yt-dlp错误）
-	args = append(args, "--ffmpeg-location", "ffmpeg")
+	// 检查系统中是否安装了ffmpeg
+	_, err := exec.LookPath("ffmpeg")
+	if err == nil {
+		// 只有在ffmpeg存在的情况下才添加ffmpeg相关参数
+		args = append(args, "--ffmpeg-location", "ffmpeg")
+	} else {
+		logrus.Warnf("系统中未安装ffmpeg，视频和音频将不会被合并: %v", err)
+		logrus.Warnf("请安装ffmpeg以获得带音频的视频")
+	}
 
 	// 添加额外的参数以确保正确下载
 	args = append(args, "--no-check-certificate")
-
-	// 生成带有任务ID前缀的输出文件名
-	outputTemplate := ""
-	if req.Output != "" {
-		// 如果提供了输出路径，在文件名前添加任务ID
-		dir := filepath.Dir(req.Output)
-		filename := filepath.Base(req.Output)
-		outputTemplate = filepath.Join(dir, fmt.Sprintf("%s_%s", req.TaskID, filename))
-	} else {
-		// 默认输出路径
-		outputTemplate = filepath.Join(y.config.Downloader.OutputDir, fmt.Sprintf("%s_%(title)s.%(ext)s", req.TaskID))
-	}
-	args = append(args, "-o", outputTemplate)
-
-	// 添加URL
-	args = append(args, req.URL)
-
-	// 创建独立的命令实例
-	cmd := exec.Command(y.config.YtDlp.Path, args...)
-	logrus.Infof("执行命令: %s %v", y.config.YtDlp.Path, args)
-
-	// 创建管道读取输出
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("创建输出管道失败: %v", err)
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return "", fmt.Errorf("创建错误输出管道失败: %v", err)
-	}
-
-	// 启动命令
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("启动下载失败: %v", err)
-	}
-
-	// 创建一个WaitGroup来等待所有goroutine完成
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// 收集错误信息
-	var stderrOutput strings.Builder
-	var stdoutOutput strings.Builder
-	var actualFilePath string
-	var videoFile string
-	var audioFile string
-
-	// 处理标准输出
-	go func() {
-		defer wg.Done()
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			line := scanner.Text()
-			stdoutOutput.WriteString(line + "\n")
-
-			// 检查是否包含文件路径信息
-			if strings.Contains(line, "Destination:") {
-				parts := strings.SplitN(line, "Destination:", 2)
-				if len(parts) > 1 {
-					filePath := strings.TrimSpace(parts[1])
-					actualFilePath = filePath
-					logrus.Infof("检测到实际下载文件路径: %s", filePath)
-
-					// 判断是视频还是音频文件
-					if strings.HasSuffix(filePath, ".mp4") {
-						videoFile = filePath
-					} else if strings.HasSuffix(filePath, ".m4a") || strings.HasSuffix(filePath, ".aac") || strings.HasSuffix(filePath, ".mp3") {
-						audioFile = filePath
-					}
-				}
-			}
-
-			// 解析进度信息并调用回调
-			if strings.Contains(line, "%") {
-				progress := parseProgress(line)
-				if progressCallback != nil {
-					progressCallback(progress)
-				}
-			}
-
-			// 记录所有输出到日志
-			logrus.Debug("yt-dlp stdout:", line)
-		}
-	}()
-
-	// 处理错误输出
-	go func() {
-		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			stderrOutput.WriteString(line + "\n")
-
-			// 检查错误输出中是否包含文件路径信息
-			if strings.Contains(line, "[download] Destination:") {
-				parts := strings.SplitN(line, "[download] Destination:", 2)
-				if len(parts) > 1 {
-					filePath := strings.TrimSpace(parts[1])
-					actualFilePath = filePath
-					logrus.Infof("从stderr检测到实际下载文件路径: %s", filePath)
-
-					// 判断是视频还是音频文件
-					if strings.HasSuffix(filePath, ".mp4") {
-						videoFile = filePath
-					} else if strings.HasSuffix(filePath, ".m4a") || strings.HasSuffix(filePath, ".aac") || strings.HasSuffix(filePath, ".mp3") {
-						audioFile = filePath
-					}
-				}
-			}
-
-			// 解析进度信息并调用回调
-			if strings.Contains(line, "%") {
-				progress := parseProgress(line)
-				if progressCallback != nil {
-					progressCallback(progress)
-				}
-			}
-
-			logrus.Debug("yt-dlp stderr:", line)
-		}
-	}()
-
-	// 等待命令完成
-	err = cmd.Wait()
-	wg.Wait()
-
-	if err != nil {
-		// 如果有错误，但是已经下载了文件，尝试手动合并
-		if videoFile != "" && audioFile != "" {
-			logrus.Warnf("yt-dlp合并失败，但已下载视频和音频文件，尝试手动合并")
-			mergedFile := filepath.Join(y.config.Downloader.OutputDir, req.TaskID+"_merged.mp4")
-			if mergedPath, mergeErr := y.mergeVideoAndAudio(videoFile, audioFile, mergedFile); mergeErr == nil {
-				logrus.Infof("手动合并成功: %s", mergedPath)
-				return mergedPath, nil
-			} else {
-				logrus.Errorf("手动合并失败: %v", mergeErr)
-				// 合并失败，返回视频文件（没有声音）
-				return videoFile, nil
-			}
-		}
-
-		// 如果没有下载任何文件，返回错误
-		errMsg := fmt.Sprintf("下载失败: %v\n命令: %s %v\n标准输出:\n%s\n错误输出:\n%s",
-			err, y.config.YtDlp.Path, args, stdoutOutput.String(), stderrOutput.String())
-		logrus.Error(errMsg)
-		return "", fmt.Errorf(errMsg)
-	}
-
-	// 如果没有从输出中获取到实际文件路径，尝试查找最近创建的文件
-	if actualFilePath == "" {
-		logrus.Warn("未从输出中检测到实际文件路径，尝试查找最近创建的文件")
-		foundPath, err := y.findActualFile(outputTemplate)
-		if err != nil {
-			logrus.Errorf("查找实际文件失败: %v", err)
-			// 如果找不到实际文件，返回错误
-			return "", fmt.Errorf("下载可能失败，无法找到下载的文件: %v", err)
-		}
-		actualFilePath = foundPath
-		logrus.Infof("找到最近创建的文件: %s", actualFilePath)
-
-		// 验证找到的文件是否与当前任务匹配
-		if !strings.Contains(filepath.Base(actualFilePath), req.TaskID) {
-			logrus.Errorf("找到的文件 %s 与当前任务ID %s 不匹配", actualFilePath, req.TaskID)
-			return "", fmt.Errorf("下载失败，找到的文件与当前任务不匹配")
-		}
-	}
-
-	// 检查是否需要手动合并视频和音频
-	if videoFile != "" && audioFile != "" && !strings.Contains(actualFilePath, "_merged") {
-		logrus.Info("检测到分离的视频和音频文件，尝试手动合并")
-		mergedFile := filepath.Join(y.config.Downloader.OutputDir, req.TaskID+"_merged.mp4")
-		if mergedPath, mergeErr := y.mergeVideoAndAudio(videoFile, audioFile, mergedFile); mergeErr == nil {
-			logrus.Infof("手动合并成功: %s", mergedPath)
-			return mergedPath, nil
-		} else {
-			logrus.Errorf("手动合并失败: %v", mergeErr)
-			// 合并失败，返回视频文件（没有声音）
-			return videoFile, nil
-		}
-	}
-
-	return actualFilePath, nil
-}
-
-// mergeVideoAndAudio 使用ffmpeg手动合并视频和音频文件
-func (y *YtdlpDownloader) mergeVideoAndAudio(videoFile, audioFile, outputFile string) (string, error) {
-	// 检查文件是否存在
-	if _, err := os.Stat(videoFile); err != nil {
-		return "", fmt.Errorf("视频文件不存在: %v", err)
-	}
-	if _, err := os.Stat(audioFile); err != nil {
-		return "", fmt.Errorf("音频文件不存在: %v", err)
-	}
-
-	// 使用ffmpeg合并
-	cmd := exec.Command("ffmpeg", "-i", videoFile, "-i", audioFile, "-c:v", "copy", "-c:a", "aac", "-strict", "experimental", outputFile)
-	logrus.Infof("执行ffmpeg合并命令: %v", cmd.Args)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ffmpeg合并失败: %v\n错误输出: %s", err, stderr.String())
-	}
-
-	// 检查输出文件是否存在
-	if _, err := os.Stat(outputFile); err != nil {
-		return "", fmt.Errorf("合并后的文件不存在: %v", err)
-	}
-
-	return outputFile, nil
-}
-
-// extractVideoID 从抖音URL中提取视频ID
-func (y *YtdlpDownloader) extractVideoID(url string) string {
-	// 标准URL格式: https://www.douyin.com/video/7123456789012345678
-	regexPattern := `douyin\.com/video/(\d+)`
-	regex := regexp.MustCompile(regexPattern)
-	matches := regex.FindStringSubmatch(url)
-	if len(matches) > 1 {
-		return matches[1]
-	}
-
-	// 如果是短链接，需要先解析重定向
-	if strings.Contains(url, "v.douyin.com") {
-		finalURL, err := y.resolveShortURL(url)
-		if err != nil {
-			logrus.Warnf("解析短链接失败: %v", err)
-			return ""
-		}
-
-		// 从解析后的URL提取视频ID
-		matches := regex.FindStringSubmatch(finalURL)
-		if len(matches) > 1 {
-			return matches[1]
-		}
-	}
-
-	return ""
-}
-
-// resolveShortURL 解析短链接，获取最终URL
-func (y *YtdlpDownloader) resolveShortURL(shortURL string) (string, error) {
-	// 确保URL格式正确
-	if !strings.HasPrefix(shortURL, "http") {
-		shortURL = "https://" + shortURL
-	}
-
-	// 如果不是v.douyin.com开头的链接，尝试修复
-	if !strings.Contains(shortURL, "v.douyin.com") && strings.Contains(shortURL, "douyin") {
-		// 提取可能的短链接ID
-		re := regexp.MustCompile(`douyin\.com\/([a-zA-Z0-9]+)`)
-		matches := re.FindStringSubmatch(shortURL)
-		if len(matches) > 1 {
-			shortURL = "https://v.douyin.com/" + matches[1]
-			logrus.Infof("修复短链接格式: %s", shortURL)
-		}
-	}
-
-	// 创建一个允许重定向的客户端，以便获取最终URL
-	client := &http.Client{
-		Timeout: time.Duration(y.config.Douyin.APITimeout) * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// 允许最多5次重定向
-			if len(via) >= 5 {
-				return fmt.Errorf("重定向次数过多")
-			}
-			return nil
-		},
-	}
-
-	// 尝试多次请求，有时候第一次请求可能会失败
-	var finalURL string
-	var respBody []byte
-	maxRetries := 3
-
-	for i := 0; i < maxRetries; i++ {
-		req, err := http.NewRequest("GET", shortURL, nil)
-		if err != nil {
-			logrus.Warnf("创建请求失败 (尝试 %d/%d): %v", i+1, maxRetries, err)
-			continue
-		}
-
-		// 设置请求头
-		req.Header.Set("User-Agent", y.config.Douyin.MobileUA)
-		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9")
-		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-		req.Header.Set("Connection", "keep-alive")
-		req.Header.Set("Upgrade-Insecure-Requests", "1")
-
-		// 发送请求
-		resp, err := client.Do(req)
-		if err != nil {
-			logrus.Warnf("请求失败 (尝试 %d/%d): %v", i+1, maxRetries, err)
-			if i == maxRetries-1 {
-				return "", fmt.Errorf("请求失败: %w", err)
-			}
-			time.Sleep(time.Duration(i+1) * time.Second) // 指数退避
-			continue
-		}
-
-		// 获取最终URL
-		finalURL = resp.Request.URL.String()
-
-		// 读取响应体
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			logrus.Warnf("读取响应体失败 (尝试 %d/%d): %v", i+1, maxRetries, err)
-			if i == maxRetries-1 {
-				return "", fmt.Errorf("读取响应体失败: %w", err)
-			}
-			time.Sleep(time.Duration(i+1) * time.Second)
-			continue
-		}
-
-		respBody = body
-		break
-	}
-
-	logrus.Infof("短链接 %s 解析为: %s", shortURL, finalURL)
-
-	// 如果是抖音主页或不包含/video/，尝试从HTML中提取视频ID
-	if finalURL == "https://www.douyin.com/" || !strings.Contains(finalURL, "/video/") {
-		// 尝试从HTML中提取视频ID
-		videoID := y.extractVideoIDFromHTML(string(respBody))
-		if videoID != "" {
-			finalURL = fmt.Sprintf("https://www.douyin.com/video/%s", videoID)
-			logrus.Infof("从HTML中提取视频ID: %s, 最终URL: %s", videoID, finalURL)
-		} else {
-			// 尝试从HTML中直接提取视频URL
-			videoURL := y.extractVideoURLFromHTML(string(respBody))
-			if videoURL != "" {
-				logrus.Infof("从HTML中直接提取到视频URL: %s", videoURL)
-				// 直接返回视频URL，而不是页面URL
-				return videoURL, nil
-			}
-		}
-	}
-
-	return finalURL, nil
-}
-
-// getDouyinRealUrl 获取抖音视频的真实地址
-func (y *YtdlpDownloader) getDouyinRealUrl(url string) (string, string, error) {
-	// 对于短链接，优先尝试解析为标准链接
-	if strings.Contains(url, "v.douyin.com") {
-		logrus.Infof("检测到抖音短链接，尝试解析为标准链接")
-		standardURL, err := y.resolveShortURL(url)
-		if err != nil {
-			logrus.Warnf("解析短链接失败: %v", err)
-		} else {
-			url = standardURL
-			logrus.Infof("短链接解析成功，标准链接: %s", url)
-		}
-	}
-
-	// 方法1: 尝试使用第三方API解析（通常这个最快且成功率高）
-	videoURL, title, err := y.getDouyinVideoByThirdPartyAPI(url)
-	if err == nil && videoURL != "" {
-		return videoURL, title, nil
-	}
-	logrus.Warnf("第三方API解析失败: %v，尝试其他方法", err)
-
-	// 方法2: 使用curl直接获取
-	videoURL, title, err = y.getDouyinVideoByDirectCurl(url)
-	if err == nil && videoURL != "" {
-		return videoURL, title, nil
-	}
-	logrus.Warnf("直接curl获取视频失败: %v，尝试其他方法", err)
-
-	// 从标准链接中提取视频ID
-	videoID := y.extractVideoID(url)
-	if videoID == "" {
-		// 如果无法提取视频ID，尝试从HTML中提取
-		logrus.Warnf("无法从URL中提取视频ID: %s", url)
-		return "", "", fmt.Errorf("无法从URL中提取视频ID: %s", url)
-	}
-
-	logrus.Infof("提取到抖音视频ID: %s", videoID)
-
-	// 方法3: 使用Web API（新添加的方法，通常比移动端API更稳定）
-	videoURL, title, err = y.getDouyinVideoByWebAPI(videoID)
-	if err == nil && videoURL != "" {
-		return videoURL, title, nil
-	}
-	logrus.Warnf("Web API获取视频失败: %v，尝试其他方法", err)
-
-	// 方法4: 使用移动端API
-	videoURL, title, err = y.getDouyinVideoByMobileAPI(videoID)
-	if err == nil && videoURL != "" {
-		return videoURL, title, nil
-	}
-	logrus.Warnf("移动端API获取视频失败: %v，尝试其他方法", err)
-
-	// 方法5: 使用官方API
-	videoURL, title, err = y.getDouyinVideoByOfficialAPI(videoID)
-	if err == nil && videoURL != "" {
-		return videoURL, title, nil
-	}
-	logrus.Warnf("官方API获取视频失败: %v", err)
-
-	// 所有方法都失败，返回错误
-	return "", "", fmt.Errorf("无法获取抖音视频地址，所有方法均失败")
-}
-
-// DownloadDouyin 专门处理抖音视频下载
-func (y *YtdlpDownloader) DownloadDouyin(req *DownloadRequest, progressCallback func(*DownloadResponse)) (string, error) {
-	if y.config.YtDlp.Path == "" {
-		return "", fmt.Errorf("yt-dlp 路径未配置，请检查 config.yaml 的 ytdlp.path")
-	}
-
-	// 检查文件是否存在且可执行
-	if _, err := os.Stat(y.config.YtDlp.Path); err != nil {
-		return "", fmt.Errorf("yt-dlp 路径无效或不可访问: %s", y.config.YtDlp.Path)
-	}
-
-	// 将抖音链接转换为标准格式
-	req.URL = y.convertDouyinUrl(req.URL)
-
-	// 尝试直接获取抖音视频地址
-	videoURL, videoTitle, err := y.getDouyinRealUrl(req.URL)
-	if err != nil {
-		logrus.Warnf("获取抖音视频真实地址失败: %v，将尝试使用yt-dlp下载", err)
-	} else {
-		// 如果成功获取到视频地址，直接使用这个地址下载
-		logrus.Infof("成功获取抖音视频真实地址，将直接下载: %s", videoURL)
-
-		// 生成带有任务ID前缀的输出文件名
-		outputTemplate := ""
-		if req.Output != "" {
-			// 如果提供了输出路径，在文件名前添加任务ID
-			dir := filepath.Dir(req.Output)
-			filename := filepath.Base(req.Output)
-			outputTemplate = filepath.Join(dir, fmt.Sprintf("%s_%s", req.TaskID, filename))
-		} else {
-			// 默认输出路径，使用视频标题
-			sanitizedTitle := y.sanitizeFilename(videoTitle)
-			if sanitizedTitle == "" {
-				sanitizedTitle = "video"
-			}
-			outputTemplate = filepath.Join(y.config.Downloader.OutputDir, fmt.Sprintf("%s_%s.mp4", req.TaskID, sanitizedTitle))
-		}
-
-		// 使用aria2c直接下载
-		args := []string{
-			fmt.Sprintf("--max-connection-per-server=%d", y.config.Aria2.MaxConnections),
-			fmt.Sprintf("--min-split-size=%dM", y.config.Aria2.MinSplitSize),
-			fmt.Sprintf("--continue=%t", y.config.Aria2.Continue),
-			"--out=" + outputTemplate,
-			videoURL,
-		}
-
-		cmd := exec.Command(y.config.Aria2.Path, args...)
-		logrus.Infof("执行命令: %s %v", y.config.Aria2.Path, args)
-
-		// 创建管道读取输出
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return "", fmt.Errorf("创建输出管道失败: %v", err)
-		}
-
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			return "", fmt.Errorf("创建错误输出管道失败: %v", err)
-		}
-
-		// 启动命令
-		if err := cmd.Start(); err != nil {
-			return "", fmt.Errorf("启动下载失败: %v", err)
-		}
-
-		// 创建一个WaitGroup来等待所有goroutine完成
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		// 收集错误信息
-		var stderrOutput strings.Builder
-		var stdoutOutput strings.Builder
-
-		// 处理标准输出
-		go func() {
-			defer wg.Done()
-			scanner := bufio.NewScanner(stdout)
-			for scanner.Scan() {
-				line := scanner.Text()
-				stdoutOutput.WriteString(line + "\n")
-
-				// 解析aria2c的进度信息
-				if strings.Contains(line, "%") {
-					// 尝试解析进度
-					progressRegex := regexp.MustCompile(`(\d+)%`)
-					matches := progressRegex.FindStringSubmatch(line)
-					if len(matches) > 1 {
-						progress, _ := strconv.ParseFloat(matches[1], 64)
-						if progressCallback != nil {
-							progressCallback(&DownloadResponse{
-								Progress: progress,
-								Speed:    extractSpeed(line),
-								ETA:      extractETA(line),
-							})
-						}
-					}
-				}
-
-				logrus.Debug("aria2c stdout:", line)
-			}
-		}()
-
-		// 处理错误输出
-		go func() {
-			defer wg.Done()
-			scanner := bufio.NewScanner(stderr)
-			for scanner.Scan() {
-				line := scanner.Text()
-				stderrOutput.WriteString(line + "\n")
-				logrus.Debug("aria2c stderr:", line)
-			}
-		}()
-
-		// 等待命令完成
-		err = cmd.Wait()
-		wg.Wait()
-
-		if err != nil {
-			// 如果aria2c下载失败，记录错误并尝试使用yt-dlp
-			logrus.Errorf("使用aria2c下载抖音视频失败: %v，将尝试使用yt-dlp下载", err)
-		} else {
-			// 如果下载成功，返回文件路径
-			logrus.Infof("使用aria2c成功下载抖音视频: %s", outputTemplate)
-			return outputTemplate, nil
-		}
-	}
-
-	// 如果直接下载失败，回退到使用yt-dlp
-	logrus.Info("回退到使用yt-dlp下载抖音视频")
-
-	// 基本参数
-	args := []string{
-		"--no-playlist",
-		"-v",        // 添加详细输出
-		"--newline", // 确保每行都有换行符，便于解析
-	}
-
-	// 为抖音添加特殊请求头
-	douyinHeaders := map[string]string{
-		"Connection":                "keep-alive",
-		"Upgrade-Insecure-Requests": "1",
-		"Sec-Fetch-Mode":            "navigate",
-		"Sec-Fetch-Site":            "none",
-		"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-		"Accept-Language":           "zh-CN,zh;q=0.9,en;q=0.8",
-		"Accept-Encoding":           "gzip, deflate, br",
-		"DNT":                       "1",
-		"Sec-Fetch-Dest":            "document",
-		"Referer":                   "https://www.douyin.com/",
-	}
-
-	// 添加抖音特殊请求头
-	for key, value := range douyinHeaders {
-		args = append(args, "--add-header", fmt.Sprintf("%s: %s", key, value))
-	}
-
-	// 使用移动端UA，这对抖音下载很重要
-	mobileUA := y.config.Douyin.MobileUA
-	if !y.config.Douyin.UseMobileUA {
-		mobileUA = y.config.YtDlp.UserAgent
-	}
-	args = append(args, "--user-agent", mobileUA)
-
-	// 添加抖音特定参数，不使用--cookies-from-browser
-	args = append(args, "--extractor-args", "douyin:app_version=9.9.10")
-	args = append(args, "--extractor-args", "douyin:device_platform=android")
-
-	// 添加额外参数
-	args = append(args, "--no-check-certificate")
-
-	// 添加直接下载参数
-	args = append(args, "--force-generic-extractor")
-
-	// 尝试使用通用下载方式
-	args = append(args, "--downloader", y.config.Aria2.Path)
-	args = append(args, "--external-downloader-args", fmt.Sprintf("%s:\"--max-connection-per-server=%d --min-split-size=%dM\"",
-		filepath.Base(y.config.Aria2.Path), y.config.Aria2.MaxConnections, y.config.Aria2.MinSplitSize))
-
-	// 如果用户提供了cookies，优先使用用户提供的cookies
-	if req.Cookies != "" {
-		// 检查是否是文件路径
-		if _, err := os.Stat(req.Cookies); err == nil {
-			args = append(args, "--cookies", req.Cookies)
-		} else {
-			// 如果不是文件路径，可能是cookies字符串，创建临时文件
-			tmpFile, err := os.CreateTemp("", "cookies-*.txt")
-			if err == nil {
-				defer os.Remove(tmpFile.Name())
-				if _, err := tmpFile.WriteString(req.Cookies); err == nil {
-					tmpFile.Close()
-					args = append(args, "--cookies", tmpFile.Name())
-				}
-			}
-		}
-	}
-
-	// 添加自定义请求头
-	if req.Headers != nil {
-		for key, value := range req.Headers {
-			args = append(args, "--add-header", fmt.Sprintf("%s: %s", key, value))
-		}
-	}
-
-	// 添加格式选择
-	if req.Format == "best" || req.Format == "" {
-		// 使用更通用的格式选择，确保同时下载视频和音频
-		args = append(args, "-f", "bestvideo+bestaudio/best")
-	} else {
-		// 如果用户指定了具体格式，尝试使用它，但添加备选项
-		args = append(args, "-f", req.Format+"/bestvideo+bestaudio/best")
-	}
-
-	// 确保合并视频和音频
-	args = append(args, "--merge-output-format", "mp4")
-
-	// 强制使用FFmpeg合并
-	args = append(args, "--ffmpeg-location", "ffmpeg")
 
 	// 生成带有任务ID前缀的输出文件名
 	outputTemplate := ""
@@ -2461,4 +1876,42 @@ func (y *YtdlpDownloader) getDouyinVideoByWebAPI(videoID string) (string, string
 
 	// 返回视频地址和标题
 	return videoURL, title, nil
+}
+
+// mergeVideoAndAudio 使用ffmpeg手动合并视频和音频文件
+func (y *YtdlpDownloader) mergeVideoAndAudio(videoFile, audioFile, outputFile string) (string, error) {
+	// 检查文件是否存在
+	if _, err := os.Stat(videoFile); err != nil {
+		return "", fmt.Errorf("视频文件不存在: %v", err)
+	}
+	if _, err := os.Stat(audioFile); err != nil {
+		return "", fmt.Errorf("音频文件不存在: %v", err)
+	}
+
+	// 检查系统中是否安装了ffmpeg
+	_, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		logrus.Warnf("系统中未安装ffmpeg，无法合并视频和音频: %v", err)
+		logrus.Warnf("请安装ffmpeg以获得带音频的视频，现在将返回无声视频")
+		return videoFile, nil // 返回视频文件而不是错误
+	}
+
+	// 使用ffmpeg合并
+	cmd := exec.Command("ffmpeg", "-i", videoFile, "-i", audioFile, "-c:v", "copy", "-c:a", "aac", "-strict", "experimental", outputFile)
+	logrus.Infof("执行ffmpeg合并命令: %v", cmd.Args)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg合并失败: %v\n错误输出: %s", err, stderr.String())
+	}
+
+	// 检查输出文件是否存在
+	if _, err := os.Stat(outputFile); err != nil {
+		return "", fmt.Errorf("合并后的文件不存在: %v", err)
+	}
+
+	return outputFile, nil
 }
